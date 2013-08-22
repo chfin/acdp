@@ -162,7 +162,7 @@ lsn_t seek_absolute (int32_t pos, lsn_t lsn, lsn_t first, lsn_t last, cdrom_para
 }
 
 /* opens devices and plays a track, listening for commands on stdin */
-void play (CdIo_t* cdio_drive, track_t track, char* alsa_device) {
+void play (CdIo_t* cdio_drive, track_t track, char* alsa_device, int mode) {
   int i;
   int err;
   snd_pcm_t *playback_handle;
@@ -178,7 +178,8 @@ void play (CdIo_t* cdio_drive, track_t track, char* alsa_device) {
   cdio_cddap_open (drive);
   cdio_cddap_verbose_set(drive, CDDA_MESSAGE_FORGETIT, CDDA_MESSAGE_FORGETIT);
   p = cdio_paranoia_init (drive);
-  paranoia_modeset(p, PARANOIA_MODE_FULL^PARANOIA_MODE_NEVERSKIP);
+  //  paranoia_modeset(p, PARANOIA_MODE_FULL^PARANOIA_MODE_NEVERSKIP);
+  paranoia_modeset(p, mode);
 
   //get track boundaries and seek to track start
   lsn_t first_lsn = cdio_cddap_track_firstsector (drive, track);
@@ -201,6 +202,7 @@ void play (CdIo_t* cdio_drive, track_t track, char* alsa_device) {
       if ((err = snd_pcm_writei (playback_handle, readbuf, n)) != n) {
 	//fprintf (stderr, "write to audio interface failed (%s), frame %i\n", snd_strerror (err), i);
 	snd_pcm_prepare (playback_handle);
+	snd_pcm_writei (playback_handle, readbuf, n); //write again
       }
       i++;
     }
@@ -237,15 +239,25 @@ void play (CdIo_t* cdio_drive, track_t track, char* alsa_device) {
 int main (int argc, char *argv[]) {
   char *drive = NULL;
   char *alsa_device = "default";
-  int c, track = 1;
+  int c;
+  int track = 1;
+  int mode, clevel = 0;
 
   //parse options
-  while ((c = getopt (argc, argv, "i:o:h")) != -1) {
+  while ((c = getopt (argc, argv, "i:o:c:h")) != -1) {
     switch (c) {
     case 'i': drive = optarg; break;
     case 'o': alsa_device = optarg; break;
+    case 'c': sscanf (optarg, "%d", &clevel); break;
     case 'h': usage(argv[0]); break;
     }
+  }
+
+  //set paranoia mode (0=disable, 1=full/neverskip, 2=full)
+  switch (clevel) {
+  case 1: mode = PARANOIA_MODE_FULL^PARANOIA_MODE_NEVERSKIP; break;
+  case 2: mode = PARANOIA_MODE_FULL; break;
+  default: mode = PARANOIA_MODE_DISABLE;
   }
 
   //parse track argument
@@ -272,9 +284,10 @@ int main (int argc, char *argv[]) {
   //print decisions/options
   printf ("Using drive \"%s\".\n", cdio_get_default_device(cdio));
   printf ("Using alsa device \"%s\".\n", alsa_device);
+  printf ("Correction mode is %i.\n", mode);
   printf ("Playing track %i.\n", track);
   
   //play the track
-  play (cdio, track, alsa_device);
+  play (cdio, track, alsa_device, mode);
   return 0;
 }
