@@ -17,7 +17,14 @@ plays track 1 from the standard CD drive to "default".
 $ acdp -i /dev/cdrom -o "default" 3
 ```
 
-plays track 3, input and output devices are specified. That's all.
+plays track 3, input and output devices are specified.
+Here is the full list of options:
+
+    -h          print this help
+    -c level    cdparanoia correction, 0 disabled (default), 1 full without neverskip, 2 full
+    -i device   input device, if not given, libcdio selects a device (usually /dev/cdrom)
+    -o device   alsa devive, defaults to "default"
+    -s speed    drive speed, defaults to 2 which means slowest speed for most devices (and is most silent)
 
 ## Commands
 

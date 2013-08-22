@@ -25,8 +25,10 @@ void usage (char* command) {
 \n\
 Options:\n\
   -h          print this help\n\
+  -c level    cdparanoia correction, 0 disabled (default), 1 full without neverskip, 2 full\n\
   -i device   input device, if not given, libcdio selects a device (usually /dev/cdrom)\n\
   -o device   alsa devive, defaults to \"default\"\n\
+  -s speed    drive speed, defaults to 2 which means slowest speed for most devices (and is most silent)\n\
 \n\
 The TRACK argument specifies the track to play, by default 1.\n\
 \n\
@@ -162,7 +164,7 @@ lsn_t seek_absolute (int32_t pos, lsn_t lsn, lsn_t first, lsn_t last, cdrom_para
 }
 
 /* opens devices and plays a track, listening for commands on stdin */
-void play (CdIo_t* cdio_drive, track_t track, char* alsa_device, int mode) {
+void play (CdIo_t* cdio_drive, track_t track, char* alsa_device, int mode, int speed) {
   int i;
   int err;
   snd_pcm_t *playback_handle;
@@ -177,6 +179,7 @@ void play (CdIo_t* cdio_drive, track_t track, char* alsa_device, int mode) {
   drive = cdio_cddap_identify_cdio (cdio_drive, 1, NULL);
   cdio_cddap_open (drive);
   cdio_cddap_verbose_set(drive, CDDA_MESSAGE_FORGETIT, CDDA_MESSAGE_FORGETIT);
+  cdio_cddap_speed_set (drive, speed);
   p = cdio_paranoia_init (drive);
   //  paranoia_modeset(p, PARANOIA_MODE_FULL^PARANOIA_MODE_NEVERSKIP);
   paranoia_modeset(p, mode);
@@ -242,13 +245,15 @@ int main (int argc, char *argv[]) {
   int c;
   int track = 1;
   int mode, clevel = 0;
+  int speed = 2;
 
   //parse options
-  while ((c = getopt (argc, argv, "i:o:c:h")) != -1) {
+  while ((c = getopt (argc, argv, "i:o:c:s:h")) != -1) {
     switch (c) {
     case 'i': drive = optarg; break;
     case 'o': alsa_device = optarg; break;
     case 'c': sscanf (optarg, "%d", &clevel); break;
+    case 's': sscanf (optarg, "%d", &speed); break;
     case 'h': usage(argv[0]); break;
     }
   }
@@ -285,9 +290,10 @@ int main (int argc, char *argv[]) {
   printf ("Using drive \"%s\".\n", cdio_get_default_device(cdio));
   printf ("Using alsa device \"%s\".\n", alsa_device);
   printf ("Correction mode is %i.\n", mode);
+  printf ("Attempting drive speed %i.\n", speed);
   printf ("Playing track %i.\n", track);
   
   //play the track
-  play (cdio, track, alsa_device, mode);
+  play (cdio, track, alsa_device, mode, speed);
   return 0;
 }
