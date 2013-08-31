@@ -30,7 +30,6 @@ Here is the full list of options:
 
 During playback you can use the following commands to control playback:
 
-
     pause    pauses playback
     resume   resumes playback when paused
     stop     stops and exits

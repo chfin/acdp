@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <sys/types.h>
 #include <alsa/asoundlib.h>
 #include <cdio/cdio.h>
@@ -168,12 +169,15 @@ void play (CdIo_t* cdio_drive, track_t track, char* alsa_device, int mode, int s
   int i;
   int err;
   snd_pcm_t *playback_handle;
+  snd_pcm_sframes_t delay, old_delay;
   cdrom_drive_t *drive;
   cdrom_paranoia_t *p;
   int16_t *readbuf;
-  const short n = CD_FRAMEWORDS/2;
   int stopped = 0;
   int paused = 0;
+
+  const short N = CD_FRAMEWORDS/2;
+  const short MAX_DELAY = N*4;
 
   //open cdrom drive
   drive = cdio_cddap_identify_cdio (cdio_drive, 1, NULL);
@@ -202,11 +206,23 @@ void play (CdIo_t* cdio_drive, track_t track, char* alsa_device, int mode, int s
     //read and play, except when paused
     if (!paused) {
       readbuf = cdio_paranoia_read (p, NULL);
-      if ((err = snd_pcm_writei (playback_handle, readbuf, n)) != n) {
+      if ((err = snd_pcm_writei (playback_handle, readbuf, N)) != N) {
 	//fprintf (stderr, "write to audio interface failed (%s), frame %i\n", snd_strerror (err), i);
 	snd_pcm_prepare (playback_handle);
-	snd_pcm_writei (playback_handle, readbuf, n); //write again
+	snd_pcm_writei (playback_handle, readbuf, N); //write again
       }
+      
+      //wait for playback
+      snd_pcm_delay (playback_handle, &delay);
+      snd_pcm_avail_update (playback_handle);
+      old_delay = 0;
+      while (delay > MAX_DELAY && delay != old_delay) {
+	usleep (10);
+	old_delay = delay;
+	snd_pcm_delay (playback_handle, &delay); 
+	snd_pcm_avail_update (playback_handle);
+      }
+
       i++;
     }
     
