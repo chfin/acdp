@@ -17,8 +17,8 @@ typedef enum {
   CMD_STOP
 } command_t;
 
-//description of the current playback state
-char* pb_state = "stopped";
+char* pb_state = "stopped"; //description of the current playback state
+int json_p = 1; //boolean, 1 if status message should be JSON, 0 if human readable
 
 /* prints a help message */
 void usage (char* command) {
@@ -30,6 +30,7 @@ Options:\n\
   -i device   input device, if not given, libcdio selects a device (usually /dev/cdrom)\n\
   -o device   alsa devive, defaults to \"default\"\n\
   -s speed    drive speed, defaults to 2 which means slowest speed for most devices (and is most silent)\n\
+  -r          human readable status output (old format), instead of JSON\n\
 \n\
 The TRACK argument specifies the track to play, by default 1.\n\
 \n\
@@ -95,7 +96,13 @@ int kbhit()
 
 /* prints a status message */
 void print_status (track_t track, lsn_t first, lsn_t last, lsn_t lsn) {
-  printf("Status: %s, track %i, time: %i of %i\n", pb_state, track, lsn-first, last-first);
+  if (json_p) {
+    printf("{\"status\": \"%s\", \"track\": %i, \"sector\": %i, \"length\": %i}\n",
+	   pb_state, track, lsn-first, last-first);
+  } else {
+    printf("Status: %s, track %i, time: %i of %i\n",
+	   pb_state, track, lsn-first, last-first);
+  }
 }
 
 /* parses commands on stdin */
@@ -264,12 +271,13 @@ int main (int argc, char *argv[]) {
   int speed = 2;
 
   //parse options
-  while ((c = getopt (argc, argv, "i:o:c:s:h")) != -1) {
+  while ((c = getopt (argc, argv, "i:o:c:s:rh")) != -1) {
     switch (c) {
     case 'i': drive = optarg; break;
     case 'o': alsa_device = optarg; break;
     case 'c': sscanf (optarg, "%d", &clevel); break;
     case 's': sscanf (optarg, "%d", &speed); break;
+    case 'r': json_p = 0; break;
     case 'h': usage(argv[0]); break;
     }
   }

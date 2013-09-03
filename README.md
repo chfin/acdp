@@ -25,6 +25,7 @@ Here is the full list of options:
     -i device   input device, if not given, libcdio selects a device (usually /dev/cdrom)
     -o device   alsa devive, defaults to "default"
     -s speed    drive speed, defaults to 2 which means slowest speed for most devices (and is most silent)
+  -r          human readable status output (old format), instead of JSON
 
 ## Commands
 
@@ -35,12 +36,19 @@ During playback you can use the following commands to control playback:
     stop     stops and exits
     seek o   jumps o sectors relative to the current sector
     jump n   jumps to sector n
-    status   prints the current playback status (playing/paused, current sector, total sectors)
+    status   prints the current playback status (playing/paused, track, current sector, total sectors)
 
-Note, that seek and jump do not resume paused playback.
-The output of status is meant to be human readable and easily parsable at the same time.
-I'm considering optional JSON-formatted output of status in future versions.
+Note, that `seek` and `jump` do not resume paused playback.
+The output of `status` is notated in JSON, so it can be easily parsed by another program.
+If you the old, more human readable format, use the `-r` option.
+Information about the player state ("playing"/"paused"), the track (the you started the player with), the current sector, and the track's total number of sectors.
+For example:
+
+    {"status": "paused", "track": 1, "sector": 409, "length": 96627}
+
 You can calculate the current/total time in seconds from sectors by dividing by 75, since 75 sectors of audio data make up 1 second.
+So in the above example the playback is at 0:05 (409/74 = 5, rounding down) and the total time is 21:28 (96627/75 = 1288 = 21*60 + 28, rounding down).
+Will always want to round the current time down, if you want second accuracy, since the displayed time switches when a second is completed.
 
 ## Dependencies
 
