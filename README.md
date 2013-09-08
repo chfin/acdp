@@ -5,6 +5,10 @@ A minimalistic ALSA Audio-CD player.
 acdp plays single tracks from a CD over ALSA. It can be controlled via stdin.
 It can be used as a minimalistic commandline cd player but is also inteded to be used for scripting or to be called from other programms.
 
+## License
+
+MIT License, see LICENSE file.
+
 ## Usage
 
 ```
