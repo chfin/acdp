@@ -4,9 +4,11 @@
 #include <sys/types.h>
 #include <alsa/asoundlib.h>
 #include <cdio/cdio.h>
+#include <cdio/cdtext.h>
 #include <cdio/paranoia/cdda.h>
 #include <cdio/paranoia/paranoia.h>
 #include <cdio/cd_types.h>
+#include <cddb/cddb.h>
 
 typedef enum {
   CMD_NONE,
@@ -31,6 +33,7 @@ Options:\n\
   -o device   alsa devive, defaults to \"default\"\n\
   -s speed    drive speed, defaults to 2 which means slowest speed for most devices (and is most silent)\n\
   -r          human readable status output (old format), instead of JSON\n\
+  -q          print CDDB info in JSON and exit (respects -i)\n\
 \n\
 The TRACK argument specifies the track to play, by default 1.\n\
 \n\
@@ -40,6 +43,124 @@ Examples:\n\
 %s -i /dev/cdrom -o default 1\n\
     does the same with explicitly specified options\n", command, command, command);
   exit (0);
+}
+
+/* escape quotation marks in strings */
+char* escape_qm (const char* str) {
+  int i, lold, lnew, len, qcnt = 0;
+  len = strlen (str);
+
+  //count " in the string
+  for (i=0; i<len; i++) {
+    if (str[i] == '"') qcnt++;
+  }
+
+  //allocate a buffer for the string plus a \ per " (plus null-character)
+  char *res = (char*) malloc (len+qcnt+1);
+
+  //copy string in blocks between "s and insert \
+  lold = 0; lnew = 0;
+  for (i=0; i<len; i++) {
+    if (str[i] == '"') {
+      int n = i-lold;
+      strncpy (res+lnew, str+lold, n);
+      lold = i;
+      lnew += n;
+      res[lnew] = '\\';
+      lnew++;
+    }
+  }
+  strncpy (res+lnew, str+lold, len-lold); //copy the remaining part
+
+  return res;
+}
+
+/* output cd information */
+void print_info (char* drive) {
+  int i;
+
+  //open cd drive
+  CdIo_t *cdio = cdio_open (drive, DRIVER_DEVICE);
+  if (cdio == NULL)
+    return;
+  
+  //get info about tracks
+  track_t first_track = cdio_get_first_track_num (cdio);
+  track_t track_count = cdio_get_num_tracks (cdio);
+  track_t last_track = first_track + track_count - 1;
+
+  //create a disc template for a cddb query
+  cddb_disc_t *disc = cddb_disc_new ();
+
+  //get total length in seconds
+  int length = cdio_get_track_lba(cdio, CDIO_CDROM_LEADOUT_TRACK)
+    / CDIO_CD_FRAMES_PER_SEC;
+  cddb_disc_set_length (disc, length);
+
+  //get the tracks' offsets
+  cddb_track_t *track;
+  for (i=first_track; i<=last_track; i++) {
+    track = cddb_track_new ();
+    cddb_track_set_frame_offset (track, cdio_get_track_lba (cdio, i));
+    cddb_disc_add_track (disc, track);
+  }
+
+  //new cddb connection
+  cddb_conn_t *conn = NULL;
+  conn = cddb_new ();
+  
+  //query the cddb
+  int matches = cddb_query(conn, disc);
+  //printf ("Matches: %i\n", matches);
+  cddb_read (conn, disc);
+  //cddb_disc_print (disc);
+
+  //print the collected info as JSON and escape " in strings
+  char* title = escape_qm (cddb_disc_get_title (disc));
+  char* artist = escape_qm (cddb_disc_get_artist (disc));
+  char* genre = escape_qm (cddb_disc_get_genre (disc));
+  printf ("{\n\
+  \"firsttrack\": %i,\n\
+  \"trackcount\": %i,\n\
+  \"seconds\": %i,\n\
+  \"discid\": %i,\n\
+  \"title\": \"%s\",\n\
+  \"artist\": \"%s\",\n\
+  \"genre\": \"%s\",\n\
+  \"year\": %i,\n\
+  \"tracks\": [\n",
+	  first_track, track_count, length,
+	  cddb_disc_get_discid (disc), title,
+	  artist, genre, cddb_disc_get_year (disc));
+  fflush(stdout);
+  free ((void*) title);
+  free ((void*) artist);
+  free ((void*) genre);
+
+  //print per-track info
+  for (i=0; i<track_count; i++) {
+    track = cddb_disc_get_track (disc, i);
+    title = escape_qm(cddb_track_get_title (track));
+    artist = escape_qm(cddb_track_get_artist (track));
+    
+    printf ("    {\n\
+      \"number\": %i,\n\
+      \"length\": %i,\n\
+      \"title\": \"%s\",\n\
+      \"artist\": \"%s\"\n\
+    }%s\n",
+	    cddb_track_get_number (track), cddb_track_get_length (track),
+	    title, artist, (i==track_count-1)?"":",");
+    free ((void*) title);
+    free ((void*) artist);
+  }
+
+  printf ("  ]\n}\n");
+
+  fflush (stdout);
+  cdio_destroy (cdio);
+  cddb_disc_destroy (disc);
+  cddb_destroy (conn);
 }
 
 /* exits with error message, if err<0 */
@@ -103,6 +224,7 @@ void print_status (track_t track, lsn_t first, lsn_t last, lsn_t lsn) {
     printf("Status: %s, track %i, time: %i of %i\n",
 	   pb_state, track, lsn-first, last-first);
   }
+  fflush(stdout);
 }
 
 /* parses commands on stdin */
@@ -122,22 +244,30 @@ command_t process_commands (track_t track, lsn_t first, lsn_t last, lsn_t lsn, i
   if (strncmp ("pause", line, 5) == 0) {
     pb_state = "paused";
     printf ("Paused.\n");
+    fflush(stdout);
     return CMD_PAUSE;
   } else if (strncmp ("resume", line, 6) == 0) {
     pb_state = "playing";
     printf ("Resumed.\n");
+    fflush(stdout);
     return CMD_RESUME;
   } else if (strncmp ("stop", line, 4) == 0)
     return CMD_STOP;
   else if (strncmp ("status", line, 6) == 0) {
     print_status (track, first, last, lsn);
     return CMD_NONE;
+    //} else if (strncmp ("info", line, 4) == 0) {
+    //print_info ();
+    //return CMD_NONE;
   } else if (sscanf (line, "seek %d", seek) == 1)
     return CMD_SEEK;
   else if (sscanf (line, "jump %d", seek) == 1)
     return CMD_JUMP;
-  else
+  else {
+    printf ("Unknown comman: %s", line);
+    fflush(stdout);
     return CMD_NONE;
+  }
 }
 
 /* seeks cd relative to current position within track boundaries, returns new position (sector) */
@@ -148,14 +278,17 @@ lsn_t seek_relative (int32_t offset, lsn_t lsn, lsn_t first, lsn_t last, cdrom_p
 
   if (pos < first) {
     printf ("%i.\n", first);
+    fflush(stdout);
     cdio_paranoia_seek (p, first, SEEK_SET);
     return first;
   } else if (pos > last) {
     printf ("%i.\n", last);
+    fflush(stdout);
     cdio_paranoia_seek (p, last, SEEK_SET);
     return last;
   } else {
     printf ("%i.\n", pos);
+    fflush(stdout);
     cdio_paranoia_seek (p, offset, SEEK_CUR);
     return pos;
   }
@@ -167,6 +300,7 @@ lsn_t seek_absolute (int32_t pos, lsn_t lsn, lsn_t first, lsn_t last, cdrom_para
   else if (pos > last) pos = last;
   
   printf ("Jumping from %i to %i.\n", lsn, pos);
+  fflush(stdout);
   
   cdio_paranoia_seek (p, pos, SEEK_SET);
 }
@@ -194,6 +328,7 @@ void play (CdIo_t* cdio_drive, track_t track, char* alsa_device, int mode, int s
   p = cdio_paranoia_init (drive);
   //  paranoia_modeset(p, PARANOIA_MODE_FULL^PARANOIA_MODE_NEVERSKIP);
   paranoia_modeset(p, mode);
+  fflush(stdout);
 
   //get track boundaries and seek to track start
   lsn_t first_lsn = cdio_cddap_track_firstsector (drive, track);
@@ -269,17 +404,24 @@ int main (int argc, char *argv[]) {
   int track = 1;
   int mode, clevel = 0;
   int speed = 2;
+  int query = 0; // boolean, -q option flag
 
   //parse options
-  while ((c = getopt (argc, argv, "i:o:c:s:rh")) != -1) {
+  while ((c = getopt (argc, argv, "i:o:c:s:rqh")) != -1) {
     switch (c) {
     case 'i': drive = optarg; break;
     case 'o': alsa_device = optarg; break;
     case 'c': sscanf (optarg, "%d", &clevel); break;
     case 's': sscanf (optarg, "%d", &speed); break;
     case 'r': json_p = 0; break;
+    case 'q': query = 1; break;
     case 'h': usage(argv[0]); break;
     }
+  }
+
+  if (query == 1) {
+    print_info (drive);
+    exit(0);
   }
 
   //set paranoia mode (0=disable, 1=full/neverskip, 2=full)
@@ -316,6 +458,7 @@ int main (int argc, char *argv[]) {
   printf ("Correction mode is %i.\n", mode);
   printf ("Attempting drive speed %i.\n", speed);
   printf ("Playing track %i.\n", track);
+  fflush (stdout);
   
   //play the track
   play (cdio, track, alsa_device, mode, speed);
