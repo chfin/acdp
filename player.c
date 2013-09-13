@@ -9,6 +9,7 @@
 #include <cdio/paranoia/paranoia.h>
 #include <cdio/cd_types.h>
 #include <cddb/cddb.h>
+#include <utf8proc.h>
 
 typedef enum {
   CMD_NONE,
@@ -58,7 +59,7 @@ char* escape_qm (const char* str) {
   //allocate a buffer for the string plus a \ per " (plus null-character)
   char *res = (char*) malloc (len+qcnt+1);
 
-  //copy string in blocks between "s and insert \
+  //copy string in blocks between "s and insert \s
   lold = 0; lnew = 0;
   for (i=0; i<len; i++) {
     if (str[i] == '"') {
@@ -72,7 +73,11 @@ char* escape_qm (const char* str) {
   }
   strncpy (res+lnew, str+lold, len-lold); //copy the remaining part
 
-  return res;
+  char* fixed;
+  utf8proc_map (res, 0, (uint8_t**) &fixed, UTF8PROC_NULLTERM);
+  free (res);
+
+  return fixed;
 }
 
 /* output cd information */
@@ -108,6 +113,7 @@ void print_info (char* drive) {
   //new cddb connection
   cddb_conn_t *conn = NULL;
   conn = cddb_new ();
+  cddb_set_charset (conn, "UTF-8");
   
   //query the cddb
   int matches = cddb_query(conn, disc);
@@ -167,7 +173,7 @@ void print_info (char* drive) {
 void ensure (int err, char* msg) {
   if (err < 0) {
     fprintf (stderr, "Error: %s (%s)", msg, snd_strerror (err));
-    exit(1);
+    exit(-1);
   }
 }
 
@@ -296,6 +302,7 @@ lsn_t seek_relative (int32_t offset, lsn_t lsn, lsn_t first, lsn_t last, cdrom_p
 
 /* seeks cd, jumps to absolute position within track boundaries, returns new position (sector) */
 lsn_t seek_absolute (int32_t pos, lsn_t lsn, lsn_t first, lsn_t last, cdrom_paranoia_t *p) {
+  pos += first; // absolute within the track, not the disc!
   if (pos < first) pos = first;
   else if (pos > last) pos = last;
   
@@ -303,10 +310,13 @@ lsn_t seek_absolute (int32_t pos, lsn_t lsn, lsn_t first, lsn_t last, cdrom_para
   fflush(stdout);
   
   cdio_paranoia_seek (p, pos, SEEK_SET);
+
+  return pos;
 }
 
 /* opens devices and plays a track, listening for commands on stdin */
-void play (CdIo_t* cdio_drive, track_t track, char* alsa_device, int mode, int speed) {
+int play (CdIo_t* cdio_drive, track_t track,
+	  char* alsa_device, int mode, int speed) {
   int i;
   int err;
   snd_pcm_t *playback_handle;
@@ -332,7 +342,7 @@ void play (CdIo_t* cdio_drive, track_t track, char* alsa_device, int mode, int s
 
   //get track boundaries and seek to track start
   lsn_t first_lsn = cdio_cddap_track_firstsector (drive, track);
-  lsn_t   last_lsn = cdio_cddap_track_lastsector(drive, track);
+  lsn_t last_lsn = cdio_cddap_track_lastsector(drive, track);
   cdio_paranoia_seek(p, first_lsn, SEEK_SET);
 
   //open alsa device
@@ -382,19 +392,21 @@ void play (CdIo_t* cdio_drive, track_t track, char* alsa_device, int mode, int s
 
   pb_state = "stopped";
 
-  //tell if stopped or finished
-  if (stopped) {
-    printf ("Stopped.\n");
-  } else {
-    printf ("Done.\n");
-  }
-
   //close alsa device
   snd_pcm_close (playback_handle);
 
   //close cdrom drive
   cdio_paranoia_free (p);
   cdio_cddap_close (drive);
+
+  //tell if stopped or finished
+  if (stopped) {
+    printf ("Stopped.\n");
+    return 1;
+  } else {
+    printf ("Done.\n");
+    return 0;
+  }
 }
 
 int main (int argc, char *argv[]) {
@@ -435,21 +447,21 @@ int main (int argc, char *argv[]) {
   if (optind < argc) {
     if (sscanf(argv[optind], "%d", &track) != 1) {
       fprintf (stderr, "Error: cannot parse track argument (%s)!\n", argv[optind]);
-      exit (1);
+      exit (-1);
     }
   }
 
   //open cd device
   CdIo_t *cdio = cdio_open (drive, DRIVER_DEVICE);
   if (cdio == NULL)
-    return;
+    return -1;
 
   //check track range
   track_t first_track = cdio_get_first_track_num (cdio);
   track_t last_track = first_track+cdio_get_num_tracks (cdio)-1;
   if (track < first_track || track > last_track) {
     fprintf (stderr, "Error: track number out of range (%i - %i)!\n", first_track, last_track);
-    exit (1);
+    exit (-1);
   }
 
   //print decisions/options
@@ -459,8 +471,7 @@ int main (int argc, char *argv[]) {
   printf ("Attempting drive speed %i.\n", speed);
   printf ("Playing track %i.\n", track);
   fflush (stdout);
-  
+
   //play the track
-  play (cdio, track, alsa_device, mode, speed);
-  return 0;
+  return play (cdio, track, alsa_device, mode, speed);
 }
